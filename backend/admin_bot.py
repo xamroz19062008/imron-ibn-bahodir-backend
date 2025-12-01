@@ -2,7 +2,6 @@ from pathlib import Path
 import os
 import time
 import requests
-import sqlite3
 
 # === НАСТРОЙКИ ===
 # Токен берём из переменной окружения BOT_TOKEN
@@ -12,8 +11,10 @@ if not BOT_TOKEN:
 
 API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 
-# БД лежит рядом с этим файлом
-DB_PATH = Path(__file__).resolve().parent / "leads.db"
+BACKEND_URL = os.environ.get(
+    "BACKEND_URL",
+    "https://imron-ibn-bahodir-backend.onrender.com",
+)
 # ================
 
 
@@ -43,51 +44,49 @@ def build_main_keyboard():
     }
 
 
-def fetch_leads(where_clause=None, params=()):
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    cur = conn.cursor()
-
-    query = """
-        SELECT
-            name,
-            company,
-            phone,
-            email,
-            volume,
-            usage_purpose,
-            comment,
-            datetime(created_at, 'localtime') AS created_at
-        FROM leads
+def fetch_leads(period: str | None) -> list[dict]:
     """
-    if where_clause:
-        query += " WHERE " + where_clause
+    period: None / 'today' / 'month' / 'year'
+    """
+    params = {
+        "limit": 10,
+    }
+    if period:
+        params["period"] = period
 
-    query += " ORDER BY created_at DESC LIMIT 10"
+    try:
+        resp = requests.get(
+            f"{BACKEND_URL}/admin/leads",
+            params=params,
+            timeout=15,
+        )
+        data = resp.json()
+        if not data.get("success"):
+            print("Ошибка ответа backend:", data)
+            return []
+        return data.get("leads", [])
+    except Exception as e:
+        print("Ошибка запроса к backend:", e)
+        return []
 
-    cur.execute(query, params)
-    rows = cur.fetchall()
-    conn.close()
-    return rows
 
-
-def format_leads(rows):
-    if not rows:
+def format_leads(leads: list[dict]) -> str:
+    if not leads:
         return "Записей не найдено."
 
     parts = []
-    for row in rows:
+    for row in leads:
         parts.append(
             (
                 "🆕 <b>Заявка</b>\n"
-                f"📅 <b>Дата:</b> {row['created_at']}\n\n"
-                f"👤 Имя: {row['name']}\n"
-                f"🏢 Компания: {row['company']}\n"
-                f"📞 Телефон: {row['phone']}\n"
-                f"📧 Email: {row['email']}\n\n"
-                f"📦 Объём: {row['volume']}\n"
-                f"🛠 Использование: {row['usage_purpose']}\n\n"
-                f"📝 Комментарий:\n{row['comment'] or '—'}"
+                f"📅 <b>Дата:</b> {row.get('created_at','')}\n\n"
+                f"👤 Имя: {row.get('name','')}\n"
+                f"🏢 Компания: {row.get('company','')}\n"
+                f"📞 Телефон: {row.get('phone','')}\n"
+                f"📧 Email: {row.get('email','')}\n\n"
+                f"📦 Объём: {row.get('volume','')}\n"
+                f"🛠 Использование: {row.get('usage_purpose','')}\n\n"
+                f"📝 Комментарий:\n{row.get('comment') or '—'}"
             )
         )
 
@@ -106,27 +105,23 @@ def handle_text(chat_id, text):
         return
 
     if text.startswith("📋 Все заявки"):
-        rows = fetch_leads()
-        send_message(chat_id, format_leads(rows))
+        leads = fetch_leads(None)
+        send_message(chat_id, format_leads(leads))
         return
 
     if text == "📅 За сегодня":
-        rows = fetch_leads("DATE(created_at, 'localtime') = DATE('now','localtime')")
-        send_message(chat_id, format_leads(rows))
+        leads = fetch_leads("today")
+        send_message(chat_id, format_leads(leads))
         return
 
     if text == "🗓 За этот месяц":
-        rows = fetch_leads(
-            "strftime('%Y-%m', created_at, 'localtime') = strftime('%Y-%m','now','localtime')"
-        )
-        send_message(chat_id, format_leads(rows))
+        leads = fetch_leads("month")
+        send_message(chat_id, format_leads(leads))
         return
 
     if text == "📆 За этот год":
-        rows = fetch_leads(
-            "strftime('%Y', created_at, 'localtime') = strftime('%Y','now','localtime')"
-        )
-        send_message(chat_id, format_leads(rows))
+        leads = fetch_leads("year")
+        send_message(chat_id, format_leads(leads))
         return
 
     # любое другое сообщение
