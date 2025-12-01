@@ -17,8 +17,35 @@ DB_PATH = BASE_DIR / "leads.db"   # leads.db лежит рядом с app.py
 app = Flask(__name__)
 CORS(app)
 
+# ---------- ИНИЦИАЛИЗАЦИЯ БАЗЫ ----------
+def init_db():
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS leads (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT,
+            company TEXT,
+            phone TEXT,
+            email TEXT,
+            volume TEXT,
+            usage_purpose TEXT,
+            comment TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        """
+    )
+    conn.commit()
+    conn.close()
+    print(f"DB init OK, path = {DB_PATH}")
+
+
+init_db()  # вызываем один раз при старте приложения
+# ========================================
+
+
 # ===== НАСТРОЙКИ БОТА =====
-# Лучше хранить токен в переменной окружения BOT_TOKEN на Render
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 
 # Два администратора — сюда ставишь свои Telegram ID
@@ -54,11 +81,15 @@ def save_lead(name, company, phone, email, volume, usage, comment):
 
 # ---------- ОТПРАВКА В TELEGRAM ----------
 def send_telegram(text: str):
+    if not BOT_TOKEN:
+        print("BOT_TOKEN не задан, Telegram-уведомление не отправлено")
+        return
+
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
 
     for admin_id in ADMINS:
         try:
-            requests.post(
+            resp = requests.post(
                 url,
                 json={
                     "chat_id": admin_id,
@@ -67,6 +98,7 @@ def send_telegram(text: str):
                 },
                 timeout=15,
             )
+            print("TG response:", admin_id, resp.status_code, resp.text)
         except Exception as e:
             print("Ошибка отправки в Telegram:", e)
 
@@ -129,7 +161,7 @@ def lead():
         return jsonify({"success": False, "message": "Ошибка сервера"}), 500
 
 
-# ---------- ЗАПУСК ----------
+# ---------- ЗАПУСК ЛОКАЛЬНО ----------
 if __name__ == "__main__":
     # Render передаёт порт в переменной окружения PORT
     port = int(os.environ.get("PORT", 5050))
